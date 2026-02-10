@@ -1,3 +1,4 @@
+
 import { RSI, EMA, MACD, ATR } from 'technicalindicators';
 import { Candle } from './marketData';
 
@@ -15,6 +16,7 @@ export interface AnalysisResult {
     rsi: number;
     ema50: number;
     macd: number;
+    macdSignal: number; // Added for debugging
     atr: number;
     support: number;
     resistance: number;
@@ -46,6 +48,8 @@ export class TechnicalAnalysisService {
             SimpleMASignal: false
         });
         const currentMACD = macdValues[macdValues.length - 1] || { MACD: 0, signal: 0, histogram: 0 };
+        const macdLine = currentMACD.MACD || 0;
+        const macdSignal = currentMACD.signal || 0;
 
         // ATR (14) - Volatility check
         const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
@@ -60,17 +64,14 @@ export class TechnicalAnalysisService {
         // Generate Trade Setup
         let setup: TradeSetup = {
             direction: 'NEUTRAL',
-            entry: 0,
+            entry: currentPrice,
             stopLoss: 0,
             takeProfit: 0,
             riskRewardRatio: 0,
-            reason: "Market is ranging. Wait for a breakout."
+            reason: "Market is ranging. No clear trend."
         };
 
-        const macdLine = currentMACD.MACD || 0;
-        const macdSignal = currentMACD.signal || 0;
-
-        // LONG Signal Logic
+        // 1. STRONG LONG: Price > EMA + RSI > 50 + MACD Bullish
         if (currentPrice > currentEMA && currentRSI > 50 && macdLine > macdSignal) {
             const sl = Number((support - (currentATR * 0.5)).toFixed(2));
             const tp = Number((currentPrice + ((currentPrice - sl) * 1.5)).toFixed(2));
@@ -80,10 +81,10 @@ export class TechnicalAnalysisService {
                 stopLoss: sl,
                 takeProfit: tp,
                 riskRewardRatio: 1.5,
-                reason: "Price > EMA, RSI Bullish, MACD Crossover."
+                reason: "Strong Bullish: Price > EMA, RSI > 50, MACD Buy."
             };
         }
-        // SHORT Signal Logic
+        // 2. STRONG SHORT: Price < EMA + RSI < 50 + MACD Bearish
         else if (currentPrice < currentEMA && currentRSI < 50 && macdLine < macdSignal) {
             const sl = Number((resistance + (currentATR * 0.5)).toFixed(2));
             const tp = Number((currentPrice - ((sl - currentPrice) * 1.5)).toFixed(2));
@@ -93,33 +94,33 @@ export class TechnicalAnalysisService {
                 stopLoss: sl,
                 takeProfit: tp,
                 riskRewardRatio: 1.5,
-                reason: "Price < EMA, RSI Bearish, MACD Bearish Cross."
+                reason: "Strong Bearish: Price < EMA, RSI < 50, MACD Sell."
             };
         }
-        // Mean Reversion - Oversold Bounce
-        else if (currentRSI < 30) {
-            const sl = Number((currentPrice - (currentATR * 2)).toFixed(2));
-            const tp = Number(currentEMA.toFixed(2));
+        // 3. WEAK TREND FOLLOW (LONG)
+        else if (macdLine > macdSignal && currentRSI > 45) {
+            const sl = Number((currentPrice - currentATR).toFixed(2));
+            const tp = Number((currentPrice + (currentATR * 1.2)).toFixed(2));
             setup = {
                 direction: 'LONG',
                 entry: currentPrice,
                 stopLoss: sl,
                 takeProfit: tp,
-                riskRewardRatio: 2,
-                reason: "RSI Oversold (Bounce Play to EMA)."
+                riskRewardRatio: 1.2,
+                reason: "Moderate Bullish: MACD is positive, RSI decent."
             };
         }
-        // Mean Reversion - Overbought Pullback
-        else if (currentRSI > 70) {
-            const sl = Number((currentPrice + (currentATR * 2)).toFixed(2));
-            const tp = Number(currentEMA.toFixed(2));
+        // 4. WEAK TREND FOLLOW (SHORT)
+        else if (macdLine < macdSignal && currentRSI < 55) {
+            const sl = Number((currentPrice + currentATR).toFixed(2));
+            const tp = Number((currentPrice - (currentATR * 1.2)).toFixed(2));
             setup = {
                 direction: 'SHORT',
                 entry: currentPrice,
                 stopLoss: sl,
                 takeProfit: tp,
-                riskRewardRatio: 2,
-                reason: "RSI Overbought (Pullback Play to EMA)."
+                riskRewardRatio: 1.2,
+                reason: "Moderate Bearish: MACD is negative, RSI decent."
             };
         }
 
@@ -128,6 +129,7 @@ export class TechnicalAnalysisService {
             rsi: currentRSI,
             ema50: currentEMA,
             macd: macdLine,
+            macdSignal,
             atr: currentATR,
             support,
             resistance,
