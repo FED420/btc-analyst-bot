@@ -35,12 +35,16 @@ async function createAnalysisEmbed(pair: string, analysis: AnalysisResult, chart
 
     const setupEmoji = direction === 'LONG' ? '🟢' : direction === 'SHORT' ? '🔴' : '⚪';
 
+    // Use Bot's Avatar if available (uploaded to Discord), else fallback to generic crypto icon
+    // Note: client.user.avatar is the hash, client.user.displayAvatarURL() gives the full URL
+    const botIcon = client.user?.avatar ? client.user.displayAvatarURL() : 'https://cdn-icons-png.flaticon.com/512/cryptocurrency/cryptocurrency.png';
+
     const embed = new EmbedBuilder()
         .setColor(embedColor)
         .setTitle(`${pair} Analysis 📊`)
         .setDescription(`**Price:** $${analysis.currentPrice?.toLocaleString('en-US', { minimumFractionDigits: 2 })}`)
         .setImage(chartUrl) // Main Chart Image
-        .setThumbnail('https://cdn-icons-png.flaticon.com/512/cryptocurrency/cryptocurrency.png')
+        .setThumbnail(botIcon)
         .addFields(
             {
                 name: '📈 Trend Check',
@@ -69,7 +73,7 @@ R/R:   ${setup.riskRewardRatio}:1
                 inline: false
             }
         )
-        .setFooter({ text: `PID: ${process.pid} • Paper Trading with Leverage! 🚀` })
+        .setFooter({ text: `PID: ${process.pid} • Paper Trading with Leverage! 🚀`, iconURL: botIcon })
         .setTimestamp();
 
     return embed;
