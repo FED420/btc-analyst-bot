@@ -3,6 +3,8 @@ import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import * as dotenv from 'dotenv';
 import { MarketDataService } from './services/marketData';
 import { TechnicalAnalysisService, AnalysisResult } from './services/technicalAnalysis';
+import { ChartService } from './services/chartService';
+import { PaperTradingService } from './services/paperTrading';
 
 dotenv.config();
 
@@ -16,105 +18,81 @@ const client = new Client({
 
 const marketData = new MarketDataService();
 const technicalAnalysis = new TechnicalAnalysisService();
+const chartService = new ChartService();
+const paperTrading = new PaperTradingService();
 
 /**
  * Creates a Discord Embed for the analysis result
  */
-function createAnalysisEmbed(analysis: AnalysisResult): EmbedBuilder {
+async function createAnalysisEmbed(pair: string, analysis: AnalysisResult, chartUrl: string): Promise<EmbedBuilder> {
     const setup = analysis.setup;
-    if (!setup) {
-        throw new Error('Analysis setup is missing');
-    }
+    if (!setup) throw new Error('Analysis setup is missing');
 
-    // Determine Color based on Direction
+    const direction = setup.direction;
     let embedColor = 0x95a5a6; // Grey (Neutral)
-    if (setup.direction === 'LONG') embedColor = 0x2ecc71; // Green
-    else if (setup.direction === 'SHORT') embedColor = 0xe74c3c; // Red
+    if (direction === 'LONG') embedColor = 0x2ecc71; // Green
+    else if (direction === 'SHORT') embedColor = 0xe74c3c; // Red
 
-    const setupEmoji = setup.direction === 'LONG' ? '🟢' : setup.direction === 'SHORT' ? '🔴' : '⚪';
-
-    // RSI Logic
-    let rsiStatus = 'Neutral';
-    if (analysis.rsi > 70) rsiStatus = 'Overbought 🔴';
-    if (analysis.rsi < 30) rsiStatus = 'Oversold 🟢';
-
-    // MACD Logic
-    let macdStatus = 'Neutral';
-    if (analysis.macd > (analysis.macdSignal || 0)) macdStatus = 'Bullish 🟢';
-    if (analysis.macd < (analysis.macdSignal || 0)) macdStatus = 'Bearish 🔴';
+    const setupEmoji = direction === 'LONG' ? '🟢' : direction === 'SHORT' ? '🔴' : '⚪';
 
     const embed = new EmbedBuilder()
         .setColor(embedColor)
-        .setTitle(`Bitcoin (BTC/USDT) Analysis 📊`)
-        .setThumbnail('https://cryptologos.cc/logos/bitcoin-btc-logo.png')
-        .setDescription(`**Current Price:** $${analysis.currentPrice?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+        .setTitle(`${pair} Analysis 📊`)
+        .setDescription(`**Price:** $${analysis.currentPrice?.toLocaleString('en-US', { minimumFractionDigits: 2 })}`)
+        .setImage(chartUrl) // Main Chart Image
+        .setThumbnail('https://cdn-icons-png.flaticon.com/512/cryptocurrency/cryptocurrency.png')
         .addFields(
             {
                 name: '📈 Trend Check',
-                value: `${setupEmoji} **${setup.direction}**\n*${setup.reason}*`,
+                value: `${setupEmoji} **${direction}**\n*${setup.reason}*`,
                 inline: false
             },
             {
                 name: '📊 Indicators',
-                value: `**RSI (14):** ${analysis.rsi?.toFixed(2)} (${rsiStatus})\n**MACD:** ${analysis.macd?.toFixed(2)} (${macdStatus})`,
+                value: `**RSI:** ${analysis.rsi?.toFixed(2)}\n**MACD:** ${analysis.macd?.toFixed(2)}`,
                 inline: true
             },
             {
                 name: '📉 Volatility',
-                value: `**ATR (14):** ${analysis.atr?.toFixed(2)}\n**EMA (50):** $${analysis.ema50?.toFixed(2)}`,
+                value: `**ATR:** ${analysis.atr?.toFixed(2)}\n**EMA:** $${analysis.ema50?.toFixed(2)}`,
                 inline: true
             },
+            { name: '\u200b', value: '\u200b', inline: false },
             {
-                name: '\u200b',
-                value: '\u200b',
-                inline: false
-            }, // Spacer
-            {
-                name: '🎯 Trade Setup',
+                name: '🎯 Setup',
                 value: `\`\`\`yaml
-Entry:   $${setup.entry?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-TP:      $${setup.takeProfit?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-SL:      $${setup.stopLoss?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-R/R:     ${setup.riskRewardRatio}:1
+Entry: $${setup.entry?.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+TP:    $${setup.takeProfit?.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+SL:    $${setup.stopLoss?.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+R/R:   ${setup.riskRewardRatio}:1
 \`\`\``,
                 inline: false
             }
         )
-        .setFooter({
-            // Add process ID to identify if multiple bots are running (Debug Feature)
-            text: `Not Financial Advice • Price Action Bot (PID: ${process.pid})`,
-            iconURL: 'https://cdn-icons-png.flaticon.com/512/4712/4712109.png'
-        })
+        .setFooter({ text: `PID: ${process.pid} • Paper Trading with Leverage! 🚀` })
         .setTimestamp();
 
     return embed;
 }
 
-// Auto-Analysis Function
+// Auto-Analysis Function (Hourly BTC Check)
 async function runAutoAnalysis() {
     const channelId = process.env.DISCORD_CHANNEL_ID;
-
-    if (!channelId) {
-        console.warn('⚠️ No DISCORD_CHANNEL_ID set in .env. Skipping auto-analysis.');
-        return;
-    }
+    if (!channelId) return;
 
     try {
         const channel = await client.channels.fetch(channelId);
+        if (!channel || !channel.isTextBased()) return;
 
-        if (!channel || !channel.isTextBased()) {
-            console.error(`❌ Channel ${channelId} not found or not text-based.`);
-            return;
-        }
-
-        console.log('Running hourly auto-analysis...');
+        console.log('Running hourly auto-analysis for BTC...');
         const candles = await marketData.getCandles('BTCUSDT', '1h');
         const analysis = technicalAnalysis.analyze(candles);
 
         if (!analysis.setup) return;
 
-        const embed = createAnalysisEmbed(analysis);
-        embed.setTitle(`Hourly Bitcoin Update 🕒`); // Override title for auto-update
+        const chartUrl = await chartService.generateChartUrl('BTC', candles);
+        const embed = await createAnalysisEmbed('BTC/USDT', analysis, chartUrl);
+        embed.setTitle(`Hourly BTC Update 🕒`);
 
         await (channel as any).send({ embeds: [embed] });
     } catch (error) {
@@ -124,13 +102,10 @@ async function runAutoAnalysis() {
 
 client.once('ready', () => {
     console.log(`Logged in as ${client.user?.tag}!`);
-    console.log('Bot is ready to receive commands.');
+    console.log('Bot is ready. Commands: !long, !short, !close, !portfolio, !reset');
 
-    if (!process.env.DISCORD_CHANNEL_ID) {
-        console.log('ℹ️  Tip: Add DISCORD_CHANNEL_ID to your .env file to enable hourly updates.');
-    } else {
+    if (process.env.DISCORD_CHANNEL_ID) {
         // Schedule hourly updates (3600000 ms = 1 hour)
-        console.log('📅 Hourly analysis scheduled.');
         setInterval(runAutoAnalysis, 3600000);
     }
 });
@@ -138,35 +113,137 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    if (!message.content && message.attachments.size === 0 && message.embeds.length === 0) {
-        console.log(`⚠️ Received message from ${message.author.tag} with NO CONTENT. Check 'Message Content Intent' in Dev Portal.`);
-        return;
-    }
+    const content = message.content.trim();
+    if (!content.startsWith('!')) return;
 
-    const content = message.content.toLowerCase();
+    const args = content.split(' ');
+    const command = args[0].toLowerCase();
 
-    if (content === '!analyze' || content === '!btc') {
-        const loadingMsg = await message.reply('Analyzing BTC market data... 🔍');
+    // ANALYZE COMMAND: !analyze ETH or !btc
+    if (command === '!analyze' || command === '!btc') {
+        const symbolInput = (command === '!btc' && !args[1]) ? 'BTC' : (args[1] || 'BTC');
+        const symbol = symbolInput.toUpperCase();
+        const pair = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`;
+
+        const loadingMsg = await message.reply(`Analyzing ${symbol}... 🔍`);
 
         try {
-            const candles = await marketData.getCandles('BTCUSDT', '1h');
+            const candles = await marketData.getCandles(pair, '1h');
             const analysis = technicalAnalysis.analyze(candles);
 
-            console.log('Analysis Result:', JSON.stringify(analysis, null, 2));
-
             if (!analysis.setup) {
-                console.error('Setup object is missing!', analysis);
-                await loadingMsg.edit('⚠️ Error: Analysis failed to generate a trade setup. Please try again.');
+                await loadingMsg.edit('⚠️ Analysis failed. No clear setup found.');
                 return;
             }
 
-            const embed = createAnalysisEmbed(analysis);
+            const chartUrl = await chartService.generateChartUrl(symbol, candles);
+            const embed = await createAnalysisEmbed(pair, analysis, chartUrl);
+
             await loadingMsg.edit({ content: '', embeds: [embed] });
 
         } catch (error) {
             console.error(error);
-            await loadingMsg.edit('Failed to fetch market data. Please try again later.');
+            await loadingMsg.edit(`❌ Failed to fetch data for ${symbol}. Is the symbol correct?`);
         }
+    }
+
+    // PAPER TRADING: LEVERAGED LONG/SHORT (!long BTC 100 10)
+    else if (command === '!long' || command === '!short') {
+        const type = command === '!long' ? 'LONG' : 'SHORT';
+        const symbol = (args[1] || '').toUpperCase();
+        const margin = parseFloat(args[2]);
+        const leverage = parseFloat(args[3] || '1');
+
+        if (!symbol || isNaN(margin) || isNaN(leverage)) {
+            await message.reply(`Usage: \`${command} <SYMBOL> <MARGIN> <LEVERAGE>\`\nExample: \`!long BTC 100 10\` (Long BTC with $100 margin at 10x leverage)`);
+            return;
+        }
+
+        const pair = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`;
+
+        try {
+            const candles = await marketData.getCandles(pair, '1h');
+            const currentPrice = candles[candles.length - 1].close;
+
+            const resultMsg = paperTrading.openPosition(message.author.id, symbol, type, margin, leverage, currentPrice);
+            await message.reply(resultMsg);
+        } catch (error) {
+            await message.reply(`❌ Could not fetch price for ${symbol}.`);
+        }
+    }
+
+    // PAPER TRADING: CLOSE POSITION (!close BTC)
+    else if (command === '!close') {
+        const symbol = (args[1] || '').toUpperCase();
+
+        if (!symbol) {
+            await message.reply('Usage: `!close <SYMBOL>` (e.g. `!close BTC`)');
+            return;
+        }
+
+        const pair = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`;
+        try {
+            const candles = await marketData.getCandles(pair, '1h');
+            const currentPrice = candles[candles.length - 1].close;
+
+            const resultMsg = paperTrading.closePosition(message.author.id, symbol, currentPrice);
+            await message.reply(resultMsg);
+        } catch (error) {
+            await message.reply(`❌ Could not fetch price for ${symbol}.`);
+        }
+    }
+
+    // PAPER TRADING: PORTFOLIO
+    else if (command === '!portfolio' || command === '!p' || command === '!balance') {
+        const user = paperTrading.getUser(message.author.id);
+
+        let holdingsText = '';
+
+        for (const [sym, pos] of Object.entries(user.holdings)) {
+            // @ts-ignore
+            const type = pos.type; // Direct access since we know the structure
+            // @ts-ignore
+            const leverage = pos.leverage;
+            // @ts-ignore
+            const entry = pos.averagePrice;
+            // @ts-ignore
+            const margin = pos.margin;
+
+            const emoji = type === 'LONG' ? '🟢' : '🔴';
+            holdingsText += `**${emoji} ${type} ${leverage}x ${sym}**\nEntry: $${entry.toFixed(2)} | Margin: $${margin.toFixed(2)}\n\n`;
+        }
+
+        if (!holdingsText) holdingsText = 'No open positions.';
+
+        const embed = new EmbedBuilder()
+            .setColor(0x3498db)
+            .setTitle(`${message.author.username}'s Futures Portfolio 🚀`)
+            .addFields(
+                { name: '💵 Available Balance', value: `$${user.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, inline: true },
+                { name: '📈 Open Positions', value: holdingsText, inline: false }
+            )
+            .setFooter({ text: 'Use !reset to restart with $10k' });
+
+        await message.reply({ embeds: [embed] });
+    }
+
+    // PAPER TRADING: RESET
+    else if (command === '!reset') {
+        const result = paperTrading.reset(message.author.id);
+        await message.reply(result);
+    }
+
+    // HELP
+    else if (command === '!help') {
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle('🤖 Bot Commands')
+            .addFields(
+                { name: '🔍 Analysis', value: '`!analyze <COIN>` - Technical analysis & Chart' },
+                { name: '💸 Trading', value: '`!long <COIN> <MARGIN> <LEV>` - Open Long (e.g. `!long BTC 100 10`)\n`!short <COIN> <MARGIN> <LEV>` - Open Short\n`!close <COIN>` - Close position' },
+                { name: '💼 Account', value: '`!portfolio` - View positions\n`!reset` - Reset to $10k' }
+            );
+        await message.reply({ embeds: [embed] });
     }
 });
 

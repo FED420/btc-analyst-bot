@@ -1,0 +1,27 @@
+{
+  "956607512231170080": {
+    "balance": 10000.011934133361,
+    "holdings": {},
+    "trades": [
+      {
+        "type": "OPEN_LONG",
+        "symbol": "BTC",
+        "amount": 0.014378473929166748,
+        "price": 69548.41,
+        "total": 1000,
+        "leverage": 10,
+        "timestamp": 1770742639601
+      },
+      {
+        "type": "CLOSE_LONG",
+        "symbol": "BTC",
+        "amount": 0.014378473929166748,
+        "price": 69549.24,
+        "total": 100.01193413336124,
+        "leverage": 10,
+        "pnl": 0.01193413336123351,
+        "timestamp": 1770742726272
+      }
+    ]
+  }
+}
